@@ -16,26 +16,30 @@
 # CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
-__author__ = 'Dimitri Desmidt, Emanuele Mazza, Yves Fauser'
+__author__ = 'Dimitri Desmidt, Yves Fauser, Emanuele Mazza'
 
 import argparse
 import ConfigParser
 import json
-from libutils import get_scope
-from libutils import get_logical_switch
+from libutils import get_dlr
+from libutils import get_datacentermoid
 from tabulate import tabulate
 from nsxramlclient.client import NsxClient
 
 
-def dlr_create(client_session, dlr_name, admin_pwd, cluster_id, datastore_id,
-               mgt_ls_id, mgt_ip, mgt_subnet, uplink_ls_id, uplink_ip, uplink_subnet, dgw_ip):
+def dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd,
+               applianceSize="compact", datastore_id="datastore-32", resourcePoolId="resgroup-10",
+               mgt_ls_id="dvportgroup-23", mgt_ip='', mgt_subnet='', uplink_ls_id="virtualwire-74",
+               uplink_ip="172.16.2.2", uplink_subnet="255.255.255.0", dgw_ip="172.16.2.1", ):
     """
     This function will create a new dlr in NSX
     :param client_session: An instance of an NsxClient Session
     :param dlr_name: The name that will be assigned to the new dlr
     :param admin_pwd: The admin password of new dlr
-    :param cluster_id: The vCenter Cluster ID where dlr control vm will be deployed
+    :param applianceSize: The DLR Control VM size
+    :param datacenterMoid: The vCenter DataCenter ID where dlr control vm will be deployed
     :param datastore_id: The vCenter datastore ID where dlr control vm will be deployed
+    :param resourcePoolId: The vCenter Cluster where dlr control vm will be deployed
     :param mgt_ls_id: New dlr management logical switch id or vds port group
     :param mgt_ip: New dlr management ip@
     :param mgt_subnet: New dlr management subnet
@@ -44,117 +48,145 @@ def dlr_create(client_session, dlr_name, admin_pwd, cluster_id, datastore_id,
     :param uplink_subnet: New dlr uplink subnet
     :param dgw_ip: New dlr default gateway
     :return: returns a tuple, the first item is the dlr ID in NSX as string, the second is string
-             containing the logical switch URL location as returned from the API
+             containing the dlr URL location as returned from the API
     """
-    vdn_scope_id, vdn_scope = get_scope(client_session, transport_zone)
-    assert vdn_scope_id, 'The Transport Zone you defined could not be found'
-    if not control_plane_mode:
-        control_plane_mode = vdn_scope['controlPlaneMode']
 
-    # get a template dict for the lswitch create
-    lswitch_create_dict = client_session.extract_resource_body_schema('logicalSwitches', 'create')
+    # get a template dict for the dlr create
+    dlr_create_dict = client_session.extract_resource_body_schema('nsxEdges', 'create')
 
-    # fill the details for the new lswitch in the body dict
-    lswitch_create_dict['virtualWireCreateSpec']['controlPlaneMode'] = control_plane_mode
-    lswitch_create_dict['virtualWireCreateSpec']['name'] = logical_switch_name
-    lswitch_create_dict['virtualWireCreateSpec']['tenantId'] = ''
+    # fill the details for the new dlr in the body dict
+    dlr_create_dict['edge']['type'] = "distributedRouter"
+    dlr_create_dict['edge']['name'] = dlr_name
+    dlr_create_dict['edge']['cliSettings'] = {'password': admin_pwd, 'remoteAccess': "True",
+                                              'userName': "admin"}
+    dlr_create_dict['edge']['appliances']['applianceSize'] = applianceSize
+    dlr_create_dict['edge']['datacenterMoid'] = datacenterMoid
+    dlr_create_dict['edge']['appliances']['appliance']['datastoreId'] = datastore_id
+    dlr_create_dict['edge']['appliances']['appliance']['resourcePoolId'] = resourcePoolId
+    dlr_create_dict['edge']['mgmtInterface'] = {'connectedToId': mgt_ls_id}
+    dlr_create_dict['edge']['interfaces'] = {'interface': {'type': "uplink", 'isConnected': "True",
+                                                           'connectedToId': uplink_ls_id,
+                                                           'addressGroups': {
+                                                               'addressGroup': {'primaryAddress': uplink_ip,
+                                                                                'subnetMask': uplink_subnet}}}}
+    del dlr_create_dict['edge']['vnics']
+    del dlr_create_dict['edge']['appliances']['appliance']['hostId']
+    del dlr_create_dict['edge']['appliances']['appliance']['customField']
 
-    # create new lswitch
-    new_ls = client_session.create('nsxEdges', uri_parameters={'scopeId': vdn_scope_id},
-                                   request_body_dict=lswitch_create_dict)
-    return new_ls['body'], new_ls['location']
+    new_dlr = client_session.create('nsxEdges', request_body_dict=dlr_create_dict)
 
+    # get a template dict for the dlr routes
+    dlr_static_route_dict = client_session.extract_resource_body_schema('routingConfig', 'update')
 
-def _logical_switch_create(client_session, **kwargs):
-    transport_zone = kwargs['transport_zone']
-    logical_switch_name = kwargs['logical_switch_name']
-    logical_switch_id, logical_switch_params = logical_switch_create(client_session, transport_zone,
-                                                                     logical_switch_name)
+    # add default gateway to the created dlr
+    dlr_static_route_dict['routing']['staticRouting']['defaultRoute']['gatewayAddress'] = dgw_ip
+    del dlr_static_route_dict['routing']['routingGlobalConfig']
+    del dlr_static_route_dict['routing']['staticRouting']['staticRoutes']
+    del dlr_static_route_dict['routing']['ospf']
+    del dlr_static_route_dict['routing']['isis']
+    del dlr_static_route_dict['routing']['bgp']
+
+    dlr_static_route = client_session.update('routingConfig', uri_parameters={'edgeId': new_dlr['objectId']},
+                                             request_body_dict=dlr_static_route_dict)
+
+    return new_dlr['objectId'], new_dlr['location']
+
+def _dlr_create(client_session, datacenter_name, vcenter_ip, vcenter_user,
+                                       vcenter_pwd, vcenter_port, **kwargs):
+    dlr_name = kwargs['dlr_name']
+    dlr_pwd = kwargs['dlr_pwd']
+
+    datacenterMoid = get_datacentermoid (datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port)
+
+    dlr_id, dlr_params = dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd)
     if kwargs['verbose']:
-        print logical_switch_params
+        print dlr_params
     else:
-        print 'Logical Switch {} created with the ID {}'.format(logical_switch_name, logical_switch_id)
+        print 'Distributed Logical Router {} created with the Edge-ID {}'.format(dlr_name, dlr_id)
 
 
-def logical_switch_delete(client_session, logical_switch_name):
+def dlr_delete(client_session, dlr_name):
     """
-    This function will delete a logical switch in NSX
+    This function will delete a dlr in NSX
     :param client_session: An instance of an NsxClient Session
-    :param logical_switch_name: The name of the logical switch to delete
-    :return: returns a tuple, the first item is a boolean indicating success or failure to delete the LS,
-             the second item is a string containing to logical switch id of the deleted LS
+    :param dlr_name: The name of the dlr to delete
+    :return: returns a tuple, the first item is a boolean indicating success or failure to delete the dlr,
+             the second item is a string containing to dlr id of the deleted dlr
     """
-    logical_switch_id, logical_switch_params = get_logical_switch(client_session, logical_switch_name)
-    if not logical_switch_id:
+    dlr_id, dlr_params = get_dlr(client_session, dlr_name)
+    if not dlr_id:
         return False, None
-    client_session.delete('logicalSwitch', uri_parameters={'virtualWireID': logical_switch_id})
-    return True, logical_switch_id
+    client_session.delete('nsxEdge', uri_parameters={'edgeId': dlr_id})
+    return True, dlr_id
 
 
-def _logical_switch_delete(client_session, **kwargs):
-    logical_switch_name = kwargs['logical_switch_name']
-    result, logical_switch_id = logical_switch_delete(client_session, logical_switch_name)
+def _dlr_delete(client_session, **kwargs):
+    dlr_name = kwargs['dlr_name']
+    result, dlr_id = dlr_delete(client_session, dlr_name)
     if result and kwargs['verbose']:
-        return json.dumps(logical_switch_id)
+        return json.dumps(dlr_id)
     elif result:
-        print 'Logical Switch {} with the ID {} has been deleted'.format(logical_switch_name, logical_switch_id)
+        print 'Distributed Logical Router {} with the ID {} has been deleted'.format(dlr_name, dlr_id)
     else:
-        print 'Logical Switch deletion failed'
+        print 'Distributed Logical Router deletion failed'
 
 
-def logical_switch_read(client_session, logical_switch_name):
+def dlr_read(client_session, dlr_name):
     """
-    This funtions retrieves details of a logical switch in NSX
+    This funtions retrieves details of a dlr in NSX
     :param client_session: An instance of an NsxClient Session
-    :param logical_switch_name: The name of the logical switch to retrieve details from
-    :return: returns a tuple, the first item is a string containing the logical switch ID, the second is a dictionary
-             containing the logical switch details retrieved from the API
+    :param dlr_name: The name of the dlr to retrieve details from
+    :return: returns a tuple, the first item is a string containing the dlr ID, the second is a dictionary
+             containing the dlr details retrieved from the API
     """
-    logical_switch_id, logical_switch_params = get_logical_switch(client_session, logical_switch_name)
-    return logical_switch_id, logical_switch_params
+    dlr_id, dlr_params = get_dlr(client_session, dlr_name)
+    return dlr_id, dlr_params
 
 
-def _logical_switch_read(client_session, **kwargs):
-    logical_switch_name = kwargs['logical_switch_name']
-    logical_switch_id, logical_switch_params = logical_switch_read(client_session, logical_switch_name)
-    if logical_switch_params and kwargs['verbose']:
-        print json.dumps(logical_switch_params)
-    elif logical_switch_id:
-        print 'Logical Switch {} has the ID {}'.format(logical_switch_name, logical_switch_id)
+def _dlr_read(client_session, **kwargs):
+    dlr_name = kwargs['dlr_name']
+    dlr_id, dlr_params = dlr_read(client_session, dlr_name)
+    if dlr_params and kwargs['verbose']:
+        print json.dumps(dlr_params)
+    elif dlr_id:
+        print 'Distributed Logical Router {} has the ID {}'.format(dlr_name, dlr_id)
     else:
-        print 'Logical Switch {} not found'.format(logical_switch_name)
+        print 'Distributed Logical Router {} not found'.format(dlr_name)
 
 
-def logical_switch_list(client_session):
+def dlr_list(client_session):
     """
-    This function returns all logical switches found in NSX
+    This function returns all DLR found in NSX
     :param client_session: An instance of an NsxClient Session
-    :return: returns a tuple, the first item is a list of tuples with item 0 containing the LS Name as string
-             and item 1 containing the LS id as string. The second item contains a list of dictionaries containing
-             all logical switch details
+    :return: returns a tuple, the first item is a list of tuples with item 0 containing the DLR Name as string
+             and item 1 containing the DLR id as string. The second item contains a list of dictionaries containing
+             all DLR details
     """
-    all_logical_switches = client_session.read_all_pages('logicalSwitchesGlobal', 'read')
-    switch_list = []
-    for ls in all_logical_switches:
-        switch_list.append((ls['name'], ls['objectId']))
-    return switch_list, all_logical_switches
+    all_dist_lr = client_session.read_all_pages('nsxEdges', 'read')
+    dist_lr_list = []
+    dist_lr_list_verbose = []
+    for dlr in all_dist_lr:
+        if dlr['edgeType'] == "distributedRouter":
+            dist_lr_list.append((dlr['name'], dlr['objectId']))
+            dist_lr_list_verbose.append(dlr)
+    return dist_lr_list, dist_lr_list_verbose
 
 
-def _logical_switch_list_print(client_session, **kwargs):
-    switches_list, switches_params = logical_switch_list(client_session)
+def _dlr_list_print(client_session, **kwargs):
+    dist_lr_list, dist_lr_params = dlr_list(client_session)
     if kwargs['verbose']:
-        print switches_params
+        print dist_lr_params
     else:
-        print tabulate(switches_list, headers=["LS name", "LS ID"], tablefmt="psql")
+        print tabulate(dist_lr_list, headers=["DLR name", "DLR ID"], tablefmt="psql")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="nsxv function for logical switch '%(prog)s @params.conf'.",
+    parser = argparse.ArgumentParser(description="nsxv function for dlr '%(prog)s @params.conf'.",
                                      fromfile_prefix_chars='@')
-    parser.add_argument("command", help="create: create a new logical switch"
-                                        "read: return the virtual wire id of a logical switch"
-                                        "delete: delete a logical switch"
-                                        "list: return a list of all logical switches")
+    parser.add_argument("command", help="create: create a new dlr"
+                                        "read: return the virtual wire id of a dlr"
+                                        "delete: delete a dlr"
+                                        "list: return a list of all dlr")
     parser.add_argument("-i",
                         "--ini",
                         help="nsx configuration file",
@@ -167,12 +199,13 @@ def main():
                         "--debug",
                         help="print low level debug of http transactions",
                         action="store_true")
-    parser.add_argument("-t",
-                        "--transport_zone",
-                        help="nsx transport zone")
     parser.add_argument("-n",
                         "--name",
-                        help="logical switch name")
+                        help="dlr name")
+    parser.add_argument("-p",
+                        "--dlrpassword",
+                        help="dlr admin password",
+                        default="VMware1!VMware1!")
     args = parser.parse_args()
 
     if args.debug:
@@ -183,23 +216,25 @@ def main():
     config = ConfigParser.ConfigParser()
     config.read(args.ini)
 
-    if args.transport_zone:
-        transport_zone = args.transport_zone
-    else:
-        transport_zone = config.get('defaults', 'transport_zone')
-
     client_session = NsxClient(config.get('nsxraml', 'nsxraml_file'), config.get('nsxv', 'nsx_manager'),
                                config.get('nsxv', 'nsx_username'), config.get('nsxv', 'nsx_password'), debug=debug)
 
+    datacenter_name = config.get('vcenter', 'datacenter_name')
+    vcenter_ip = config.get('vcenter', 'vcenter_ip')
+    vcenter_user = config.get('vcenter', 'vcenter_user')
+    vcenter_pwd = config.get('vcenter', 'vcenter_pwd')
+    vcenter_port = config.get('vcenter', 'vcenter_port')
+
     try:
         command_selector = {
-            'list': _logical_switch_list_print,
-            'create': _logical_switch_create,
-            'delete': _logical_switch_delete,
-            'read': _logical_switch_read,
-            }
-        command_selector[args.command](client_session, transport_zone=transport_zone,
-                                       logical_switch_name=args.name, verbose=args.verbose)
+            'list': _dlr_list_print,
+            'create': _dlr_create,
+            'delete': _dlr_delete,
+            'read': _dlr_read,
+        }
+        command_selector[args.command](client_session, datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd,
+                                       vcenter_port, dlr_name=args.name, dlr_pwd=args.dlrpassword, verbose=args.verbose)
+
     except KeyError:
         print('Unknown command')
         parser.print_help()

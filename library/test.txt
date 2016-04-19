@@ -1,0 +1,58 @@
+
+
+import argparse
+import ConfigParser
+import json
+from libutils import get_scope
+from libutils import get_logical_switch
+from tabulate import tabulate
+from nsxramlclient.client import NsxClient
+from pyVim.connect import SmartConnect, Disconnect
+import ssl
+from pyVmomi import vim, vmodl
+
+config = ConfigParser.ConfigParser()
+config.read("nsx.ini")
+client_session = NsxClient(config.get('nsxraml', 'nsxraml_file'), config.get('nsxv', 'nsx_manager'),
+                               config.get('nsxv', 'nsx_username'), config.get('nsxv', 'nsx_password'), debug="True")
+
+
+context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+context.verify_mode = ssl.CERT_NONE
+si = SmartConnect(host="10.114.218.201",
+                     user="administrator@vsphere.local",
+                     pwd="VMware1!",
+                     port=int("443"),
+                     sslContext=context)
+
+
+#DatacenterMoid
+content = si.RetrieveContent()
+datacenter_list = content.rootFolder.childEntity
+for datacenter in datacenter_list:
+    if datacenter.name == "Lab1":
+        datacentermoid = datacenter._moId
+print datacentermoid
+
+a[0]
+a[0].name
+dir(a[0])
+
+
+objView = content.viewManager.CreateContainerView(content.rootFolder,
+                                                        [vim.VirtualMachine],
+                                                        True)
+vmList = objView.view
+
+
+
+objView = content.viewManager.CreateContainerView(content.rootFolder)
+
+      objView.Destroy()
+
+      # Find the vm and power it on
+      tasks = [vm.PowerOn() for vm in vmList if vm.name in vmnames]
+
+
+
+### Do I need to do the disconnect of the vCenter?

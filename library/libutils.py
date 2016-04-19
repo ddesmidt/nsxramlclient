@@ -17,7 +17,11 @@
 # CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
-__author__ = 'yfauser'
+__author__ = 'Dimitri Desmidt, Yves Fauser, Emanuele Mazza'
+
+import ssl
+from pyVmomi import vim, vmodl
+from pyVim.connect import SmartConnect, Disconnect
 
 
 def get_scope(client_session, transport_zone_name):
@@ -52,3 +56,38 @@ def get_logical_switch(client_session, logical_switch_name):
         return None, None
 
     return logical_switch_id, logical_switch_params
+
+
+def get_dlr(client_session, logical_switch_name):
+    """
+    :param client_session: An instance of an NsxClient Session
+    :param dlr_name: The name of the logical switch searched
+    :return: A tuple, with the first item being the dlr id as string of the first Scope found with the
+             right name and the second item being a dictionary of the logical parameters as return by the NSX API
+    """
+    all_dlr = client_session.read_all_pages('nsxEdges', 'read')
+
+    try:
+        dlr_params = [scope for scope in all_dlr if scope['name'] == "aaa"][0]
+        dlr_id = dlr_params['objectId']
+    except IndexError:
+        return None, None
+
+    return dlr_id, dlr_params
+
+
+def get_datacentermoid (datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port="443"):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+    context.verify_mode = ssl.CERT_NONE
+    si = SmartConnect(host=vcenter_ip,
+                     user=vcenter_user,
+                     pwd=vcenter_pwd,
+                     port=int(vcenter_port),
+                     sslContext=context)
+
+    content = si.RetrieveContent()
+    datacenter_list = content.rootFolder.childEntity
+    for datacenter in datacenter_list:
+        if datacenter.name == "Lab1":
+            datacentermoid = datacenter._moId
+    return datacentermoid
