@@ -21,7 +21,7 @@ __author__ = 'Dimitri Desmidt, Yves Fauser, Emanuele Mazza'
 import argparse
 import ConfigParser
 import json
-from libutils import get_dlr
+from libutils import get_edge
 from libutils import get_datacentermoid
 from tabulate import tabulate
 from nsxramlclient.client import NsxClient
@@ -113,7 +113,7 @@ def dlr_delete(client_session, dlr_name):
     :return: returns a tuple, the first item is a boolean indicating success or failure to delete the dlr,
              the second item is a string containing to dlr id of the deleted dlr
     """
-    dlr_id, dlr_params = get_dlr(client_session, dlr_name)
+    dlr_id, dlr_params = get_edge(client_session, dlr_name)
     if not dlr_id:
         return False, None
     client_session.delete('nsxEdge', uri_parameters={'edgeId': dlr_id})
@@ -139,7 +139,7 @@ def dlr_read(client_session, dlr_name):
     :return: returns a tuple, the first item is a string containing the dlr ID, the second is a dictionary
              containing the dlr details retrieved from the API
     """
-    dlr_id, dlr_params = get_dlr(client_session, dlr_name)
+    dlr_id, dlr_params = get_edge(client_session, dlr_name)
     return dlr_id, dlr_params
 
 
