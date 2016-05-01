@@ -21,25 +21,24 @@ __author__ = 'Dimitri Desmidt, Yves Fauser, Emanuele Mazza'
 import argparse
 import ConfigParser
 import json
-from libutils import get_edge
-from libutils import get_datacentermoid
+from libutils import *
 from tabulate import tabulate
 from nsxramlclient.client import NsxClient
 
 
-def dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd,
-               applianceSize="compact", datastore_id="datastore-32", resourcePoolId="resgroup-10",
+def dlr_create(client_session, dlr_name, dlr_pwd, dlr_size,
+               datacentermoid, datastoremoid, resourcepoolid,
                mgt_ls_id="dvportgroup-23", mgt_ip='', mgt_subnet='', uplink_ls_id="virtualwire-74",
                uplink_ip="172.16.2.2", uplink_subnet="255.255.255.0", dgw_ip="172.16.2.1", ):
     """
     This function will create a new dlr in NSX
     :param client_session: An instance of an NsxClient Session
     :param dlr_name: The name that will be assigned to the new dlr
-    :param admin_pwd: The admin password of new dlr
-    :param applianceSize: The DLR Control VM size
-    :param datacenterMoid: The vCenter DataCenter ID where dlr control vm will be deployed
-    :param datastore_id: The vCenter datastore ID where dlr control vm will be deployed
-    :param resourcePoolId: The vCenter Cluster where dlr control vm will be deployed
+    :param dlr_pwd: The admin password of new dlr
+    :param dlr_size: The DLR Control VM size
+    :param datacentermoid: The vCenter DataCenter ID where dlr control vm will be deployed
+    :param datastoremoid: The vCenter datastore ID where dlr control vm will be deployed
+    :param resourcepoolid: The vCenter Cluster where dlr control vm will be deployed
     :param mgt_ls_id: New dlr management logical switch id or vds port group
     :param mgt_ip: New dlr management ip@
     :param mgt_subnet: New dlr management subnet
@@ -57,12 +56,12 @@ def dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd,
     # fill the details for the new dlr in the body dict
     dlr_create_dict['edge']['type'] = "distributedRouter"
     dlr_create_dict['edge']['name'] = dlr_name
-    dlr_create_dict['edge']['cliSettings'] = {'password': admin_pwd, 'remoteAccess': "True",
+    dlr_create_dict['edge']['cliSettings'] = {'password': dlr_pwd, 'remoteAccess': "True",
                                               'userName': "admin"}
-    dlr_create_dict['edge']['appliances']['applianceSize'] = applianceSize
-    dlr_create_dict['edge']['datacenterMoid'] = datacenterMoid
-    dlr_create_dict['edge']['appliances']['appliance']['datastoreId'] = datastore_id
-    dlr_create_dict['edge']['appliances']['appliance']['resourcePoolId'] = resourcePoolId
+    dlr_create_dict['edge']['appliances']['applianceSize'] = dlr_size
+    dlr_create_dict['edge']['datacenterMoid'] = datacentermoid
+    dlr_create_dict['edge']['appliances']['appliance']['datastoreId'] = datastoremoid
+    dlr_create_dict['edge']['appliances']['appliance']['resourcePoolId'] = resourcepoolid
     dlr_create_dict['edge']['mgmtInterface'] = {'connectedToId': mgt_ls_id}
     dlr_create_dict['edge']['interfaces'] = {'interface': {'type': "uplink", 'isConnected': "True",
                                                            'connectedToId': uplink_ls_id,
@@ -91,14 +90,20 @@ def dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd,
 
     return new_dlr['objectId'], new_dlr['location']
 
-def _dlr_create(client_session, datacenter_name, vcenter_ip, vcenter_user,
+def _dlr_create(client_session, datacenter_name, edge_datastore, edge_cluster, vcenter_ip, vcenter_user,
                                        vcenter_pwd, vcenter_port, **kwargs):
     dlr_name = kwargs['dlr_name']
     dlr_pwd = kwargs['dlr_pwd']
+    dlr_size = kwargs['dlr_size']
 
-    datacenterMoid = get_datacentermoid (datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port)
+    datacentermoid = get_datacentermoid (datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port)
+    datastoremoid = get_datastoremoid (datacenter_name, edge_datastore, vcenter_ip, vcenter_user, vcenter_pwd,
+                                       vcenter_port)
+    resourcepoolid = get_edgeresourcepoolmoid(datacenter_name, edge_cluster, vcenter_ip, vcenter_user, vcenter_pwd,
+                                       vcenter_port)
 
-    dlr_id, dlr_params = dlr_create(client_session, dlr_name, datacenterMoid, dlr_pwd)
+    dlr_id, dlr_params = dlr_create(client_session, dlr_name, dlr_pwd, dlr_size, datacentermoid, datastoremoid,
+                                    resourcepoolid)
     if kwargs['verbose']:
         print dlr_params
     else:
@@ -206,6 +211,10 @@ def main():
                         "--dlrpassword",
                         help="dlr admin password",
                         default="VMware1!VMware1!")
+    parser.add_argument("-s",
+                        "--dlrsize",
+                        help="dlr size (compact, large, quadlarge, xlarge)",
+                        default="compact")
     args = parser.parse_args()
 
     if args.debug:
@@ -224,6 +233,8 @@ def main():
     vcenter_user = config.get('vcenter', 'vcenter_user')
     vcenter_pwd = config.get('vcenter', 'vcenter_pwd')
     vcenter_port = config.get('vcenter', 'vcenter_port')
+    edge_datastore = config.get('vcenter', 'edge_datastore')
+    edge_cluster = config.get('vcenter', 'edge_cluster')
 
     try:
         command_selector = {
@@ -232,8 +243,11 @@ def main():
             'delete': _dlr_delete,
             'read': _dlr_read,
         }
-        command_selector[args.command](client_session, datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd,
-                                       vcenter_port, dlr_name=args.name, dlr_pwd=args.dlrpassword, verbose=args.verbose)
+        command_selector[args.command](client_session, datacenter_name=datacenter_name, edge_datastore=edge_datastore,
+                                       edge_cluster=edge_cluster, vcenter_ip=vcenter_ip,
+                                       vcenter_user=vcenter_user, vcenter_pwd=vcenter_pwd, vcenter_port=vcenter_port,
+                                       dlr_name=args.name, dlr_pwd=args.dlrpassword, dlr_size=args.dlrsize,
+                                       verbose=args.verbose)
 
     except KeyError:
         print('Unknown command')

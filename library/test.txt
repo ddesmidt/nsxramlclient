@@ -34,25 +34,26 @@ for datacenter in datacenter_list:
         datacentermoid = datacenter._moId
 print datacentermoid
 
-a[0]
-a[0].name
-dir(a[0])
+#datastore
+content = si.RetrieveContent()
+datacenter_list = content.rootFolder.childEntity
+for datacenter in datacenter_list:
+    if datacenter.name == "Lab1":
+        for datastore in datacenter.datastore:
+            if datastore.name == "NFS_Lab1":
+                datastorename = datastore._moId
+print datastorename
 
-
-objView = content.viewManager.CreateContainerView(content.rootFolder,
-                                                        [vim.VirtualMachine],
-                                                        True)
-vmList = objView.view
-
-
-
-objView = content.viewManager.CreateContainerView(content.rootFolder)
-
-      objView.Destroy()
-
-      # Find the vm and power it on
-      tasks = [vm.PowerOn() for vm in vmList if vm.name in vmnames]
-
+#resourcepoolid
+content = si.RetrieveContent()
+datacenter_list = content.rootFolder.childEntity
+for datacenter in datacenter_list:
+    if datacenter.name == "Lab1":
+        cluster_list = datacenter.hostFolder.childEntity
+        for cluster in cluster_list:
+            if cluster.name == "Cluster-MgtEdge":
+                resourcepoolid = cluster.resourcePool._moId
+print resourcepoolid
 
 
 ### Do I need to do the disconnect of the vCenter?

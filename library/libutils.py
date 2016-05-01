@@ -61,14 +61,14 @@ def get_logical_switch(client_session, logical_switch_name):
 def get_edge(client_session, edge_name):
     """
     :param client_session: An instance of an NsxClient Session
-    :param edge_name: The name of the logical switch searched
-    :return: A tuple, with the first item being the dlr id as string of the first Scope found with the
+    :param edge_name: The name of the edge searched
+    :return: A tuple, with the first item being the edge or dlr id as string of the first Scope found with the
              right name and the second item being a dictionary of the logical parameters as return by the NSX API
     """
     all_edge = client_session.read_all_pages('nsxEdges', 'read')
 
     try:
-        edge_params = [scope for scope in all_dlr if scope['name'] == edge_name][0]
+        edge_params = [scope for scope in all_edge if scope['name'] == edge_name][0]
         edge_id = edge_params['objectId']
     except IndexError:
         return None, None
@@ -88,6 +88,46 @@ def get_datacentermoid (datacenter_name, vcenter_ip, vcenter_user, vcenter_pwd, 
     content = si.RetrieveContent()
     datacenter_list = content.rootFolder.childEntity
     for datacenter in datacenter_list:
-        if datacenter.name == "Lab1":
+        if datacenter.name == datacenter_name:
             datacentermoid = datacenter._moId
-    return datacentermoid
+    return datacentermoid.encode("ascii")
+
+
+
+def get_datastoremoid (datacenter_name, edge_datastore, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port="443"):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+    context.verify_mode = ssl.CERT_NONE
+    si = SmartConnect(host=vcenter_ip,
+                     user=vcenter_user,
+                     pwd=vcenter_pwd,
+                     port=int(vcenter_port),
+                     sslContext=context)
+
+    content = si.RetrieveContent()
+    datacenter_list = content.rootFolder.childEntity
+    for datacenter in datacenter_list:
+        if datacenter.name == datacenter_name:
+            for datastore in datacenter.datastore:
+                if datastore.name == edge_datastore:
+                    datastorename = datastore._moId
+    return datastorename.encode("ascii")
+
+
+def get_edgeresourcepoolmoid (datacenter_name, edge_cluster, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port="443"):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+    context.verify_mode = ssl.CERT_NONE
+    si = SmartConnect(host=vcenter_ip,
+                     user=vcenter_user,
+                     pwd=vcenter_pwd,
+                     port=int(vcenter_port),
+                     sslContext=context)
+    content = si.RetrieveContent()
+    datacenter_list = content.rootFolder.childEntity
+    for datacenter in datacenter_list:
+        if datacenter.name == datacenter_name:
+            cluster_list = datacenter.hostFolder.childEntity
+            for cluster in cluster_list:
+                if cluster.name == edge_cluster:
+                    resourcepoolid = cluster.resourcePool._moId
+    return resourcepoolid.encode("ascii")
+
