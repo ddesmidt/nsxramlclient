@@ -28,8 +28,7 @@ from nsxramlclient.client import NsxClient
 
 def dlr_create(client_session, dlr_name, dlr_pwd, dlr_size,
                datacentermoid, datastoremoid, resourcepoolid,
-               mgt_ls_id="dvportgroup-23", mgt_ip='', mgt_subnet='', uplink_ls_id="virtualwire-74",
-               uplink_ip="172.16.2.2", uplink_subnet="255.255.255.0", dgw_ip="172.16.2.1", ):
+               ha_ls_id, uplink_ls_id, uplink_ip, uplink_subnet, uplink_dgw):
     """
     This function will create a new dlr in NSX
     :param client_session: An instance of an NsxClient Session
@@ -39,13 +38,11 @@ def dlr_create(client_session, dlr_name, dlr_pwd, dlr_size,
     :param datacentermoid: The vCenter DataCenter ID where dlr control vm will be deployed
     :param datastoremoid: The vCenter datastore ID where dlr control vm will be deployed
     :param resourcepoolid: The vCenter Cluster where dlr control vm will be deployed
-    :param mgt_ls_id: New dlr management logical switch id or vds port group
-    :param mgt_ip: New dlr management ip@
-    :param mgt_subnet: New dlr management subnet
+    :param ha_ls_id: New dlr ha logical switch id or vds port group
     :param uplink_ls_id: New dlr uplink logical switch id or vds port group
     :param uplink_ip: New dlr uplink ip@
     :param uplink_subnet: New dlr uplink subnet
-    :param dgw_ip: New dlr default gateway
+    :param uplink_dgw: New dlr default gateway
     :return: returns a tuple, the first item is the dlr ID in NSX as string, the second is string
              containing the dlr URL location as returned from the API
     """
@@ -62,7 +59,7 @@ def dlr_create(client_session, dlr_name, dlr_pwd, dlr_size,
     dlr_create_dict['edge']['datacenterMoid'] = datacentermoid
     dlr_create_dict['edge']['appliances']['appliance']['datastoreId'] = datastoremoid
     dlr_create_dict['edge']['appliances']['appliance']['resourcePoolId'] = resourcepoolid
-    dlr_create_dict['edge']['mgmtInterface'] = {'connectedToId': mgt_ls_id}
+    dlr_create_dict['edge']['mgmtInterface'] = {'connectedToId': ha_ls_id}
     dlr_create_dict['edge']['interfaces'] = {'interface': {'type': "uplink", 'isConnected': "True",
                                                            'connectedToId': uplink_ls_id,
                                                            'addressGroups': {
@@ -77,16 +74,17 @@ def dlr_create(client_session, dlr_name, dlr_pwd, dlr_size,
     # get a template dict for the dlr routes
     dlr_static_route_dict = client_session.extract_resource_body_schema('routingConfig', 'update')
 
-    # add default gateway to the created dlr
-    dlr_static_route_dict['routing']['staticRouting']['defaultRoute']['gatewayAddress'] = dgw_ip
-    del dlr_static_route_dict['routing']['routingGlobalConfig']
-    del dlr_static_route_dict['routing']['staticRouting']['staticRoutes']
-    del dlr_static_route_dict['routing']['ospf']
-    del dlr_static_route_dict['routing']['isis']
-    del dlr_static_route_dict['routing']['bgp']
+    # add default gateway to the created dlr if dgw entered
+    if uplink_dgw:
+        dlr_static_route_dict['routing']['staticRouting']['defaultRoute']['gatewayAddress'] = uplink_dgw
+        del dlr_static_route_dict['routing']['routingGlobalConfig']
+        del dlr_static_route_dict['routing']['staticRouting']['staticRoutes']
+        del dlr_static_route_dict['routing']['ospf']
+        del dlr_static_route_dict['routing']['isis']
+        del dlr_static_route_dict['routing']['bgp']
 
-    dlr_static_route = client_session.update('routingConfig', uri_parameters={'edgeId': new_dlr['objectId']},
-                                             request_body_dict=dlr_static_route_dict)
+        dlr_static_route = client_session.update('routingConfig', uri_parameters={'edgeId': new_dlr['objectId']},
+                                                 request_body_dict=dlr_static_route_dict)
 
     return new_dlr['objectId'], new_dlr['location']
 
@@ -102,8 +100,32 @@ def _dlr_create(client_session, datacenter_name, edge_datastore, edge_cluster, v
     resourcepoolid = get_edgeresourcepoolmoid(datacenter_name, edge_cluster, vcenter_ip, vcenter_user, vcenter_pwd,
                                        vcenter_port)
 
+    ha_ls_name = kwargs['ha_ls_name']
+    # find ha_ls_id in vDS port groups or NSX logical switches
+    ha_ls_id = get_vdsportgroupid (datacenter_name, ha_ls_name, vcenter_ip, vcenter_user, vcenter_pwd,
+                                   vcenter_port="443")
+    if not ha_ls_id:
+        ha_ls_id, ha_ls_switch_params = get_logical_switch(client_session, ha_ls_name)
+        if not ha_ls_id:
+            print 'ERROR: DLR HA switch {} does NOT exist as VDS port group nor NSX logical switch'.format(ha_ls_name)
+            return None
+
+    uplink_ls_name = kwargs['uplink_ls_name']
+    uplink_ip = kwargs['uplink_ip']
+    uplink_subnet = kwargs['uplink_subnet']
+    uplink_dgw = kwargs['uplink_dgw']
+    # find uplink_ls_id in vDS port groups or NSX logical switches
+    uplink_ls_id = get_vdsportgroupid (datacenter_name, uplink_ls_name, vcenter_ip, vcenter_user, vcenter_pwd,
+                                   vcenter_port="443")
+    if not uplink_ls_id:
+        uplink_ls_id, uplink_ls_switch_params = get_logical_switch(client_session, uplink_ls_name)
+        if not uplink_ls_id:
+            print 'ERROR: DLR uplink switch {} does NOT exist as VDS port group nor NSX logical switch'\
+                .format(uplink_ls_name)
+            return None
+
     dlr_id, dlr_params = dlr_create(client_session, dlr_name, dlr_pwd, dlr_size, datacentermoid, datastoremoid,
-                                    resourcepoolid)
+                                    resourcepoolid, ha_ls_id, uplink_ls_id, uplink_ip, uplink_subnet, uplink_dgw)
     if kwargs['verbose']:
         print dlr_params
     else:
@@ -215,6 +237,16 @@ def main():
                         "--dlrsize",
                         help="dlr size (compact, large, quadlarge, xlarge)",
                         default="compact")
+    parser.add_argument("--ha_ls",
+                        help="dlr ha LS name")
+    parser.add_argument("--uplink_ls",
+                        help="dlr uplink LS name")
+    parser.add_argument("--uplink_ip",
+                        help="dlr uplink ip address")
+    parser.add_argument("--uplink_subnet",
+                        help="dlr uplink subnet")
+    parser.add_argument("--uplink_dgw",
+                        help="dlr uplink default gateway")
     args = parser.parse_args()
 
     if args.debug:
@@ -243,10 +275,15 @@ def main():
             'delete': _dlr_delete,
             'read': _dlr_read,
         }
-        command_selector[args.command](client_session, datacenter_name=datacenter_name, edge_datastore=edge_datastore,
-                                       edge_cluster=edge_cluster, vcenter_ip=vcenter_ip,
-                                       vcenter_user=vcenter_user, vcenter_pwd=vcenter_pwd, vcenter_port=vcenter_port,
+        command_selector[args.command](client_session,
                                        dlr_name=args.name, dlr_pwd=args.dlrpassword, dlr_size=args.dlrsize,
+                                       datacenter_name=datacenter_name, edge_datastore=edge_datastore,
+                                       edge_cluster=edge_cluster,
+                                       vcenter_ip=vcenter_ip, vcenter_user=vcenter_user, vcenter_pwd=vcenter_pwd,
+                                       vcenter_port=vcenter_port,
+                                       ha_ls_name=args.ha_ls,
+                                       uplink_ls_name=args.uplink_ls, uplink_ip=args.uplink_ip,
+                                       uplink_subnet=args.uplink_subnet, uplink_dgw=args.uplink_dgw,
                                        verbose=args.verbose)
 
     except KeyError:

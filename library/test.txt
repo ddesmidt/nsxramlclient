@@ -55,5 +55,28 @@ for datacenter in datacenter_list:
                 resourcepoolid = cluster.resourcePool._moId
 print resourcepoolid
 
+#vds port group id
+content = si.RetrieveContent()
+datacenter_list = content.rootFolder.childEntity
+for datacenter in datacenter_list:
+    if datacenter.name == "Lab1":
+        network_list = datacenter.network
+        for network in network_list:
+            if network.name == "vDS-Mgt_PG":
+                vdsportgroupid = network._moId
+print vdsportgroupid
+
+
+
+c:\Python27\python.exe nsx-dlr.py create -n aaa --ha_ls=vDS-Mgt_PG --uplink_ls=Transit_LS-02 --uplink_ip=172.16.2.2 --uplink_subnet=255.255.255.0 --uplink_dgw=172.16.2.1
+
+    parser.add_argument("--uplink_ls",
+                        help="dlr uplink LS name")
+    parser.add_argument("--uplink_ip",
+                        help="dlr uplink ip address")
+    parser.add_argument("--uplink_subnet",
+                        help="dlr uplink subnet")
+    parser.add_argument("--uplink_dgw",
+                        help="dlr uplink default gateway")
 
 ### Do I need to do the disconnect of the vCenter?

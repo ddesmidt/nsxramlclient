@@ -131,3 +131,27 @@ def get_edgeresourcepoolmoid (datacenter_name, edge_cluster, vcenter_ip, vcenter
                     resourcepoolid = cluster.resourcePool._moId
     return resourcepoolid.encode("ascii")
 
+def get_vdsportgroupid (datacenter_name, switch_name, vcenter_ip, vcenter_user, vcenter_pwd, vcenter_port="443"):
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
+    context.verify_mode = ssl.CERT_NONE
+    si = SmartConnect(host=vcenter_ip,
+                     user=vcenter_user,
+                     pwd=vcenter_pwd,
+                     port=int(vcenter_port),
+                     sslContext=context)
+    content = si.RetrieveContent()
+    datacenter_list = content.rootFolder.childEntity
+    vdsportgroupid = ""
+    for datacenter in datacenter_list:
+        if datacenter.name == datacenter_name:
+            network_list = datacenter.network
+            for network in network_list:
+                if network.name == switch_name:
+                    vdsportgroupid = network._moId
+    if vdsportgroupid:
+        return vdsportgroupid.encode("ascii")
+    else:
+        return
+
+
+
