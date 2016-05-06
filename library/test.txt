@@ -17,6 +17,27 @@ client_session = NsxClient(config.get('nsxraml', 'nsxraml_file'), config.get('ns
                                config.get('nsxv', 'nsx_username'), config.get('nsxv', 'nsx_password'), debug="True")
 
 
+
+all_int = client_session.read('interfaces', uri_parameters={'edgeId': "edge-86"})
+dlr_int_list = []
+dlr_int_list_verbose = []
+for interface in all_int['body']['interfaces']['interface']:
+    dlr_int_list.append((interface['connectedToName'], interface['index'],
+                         interface['addressGroups']['addressGroup']['primaryAddress'],
+                         interface['addressGroups']['addressGroup']['subnetMask']))
+    dlr_int_list_verbose.append(interface)
+dlr_int_list
+
+
+
+all_int = client_session.read('interfaces', uri_parameters={'edgeId': "edge-86"})
+dlr_int_list = []
+dlr_int_list_verbose = []
+for interface in all_int['body']['interfaces']['interface']:
+    dlr_int_list.append((interface['connectedToName']))
+    dlr_int_list_verbose.append(interface)
+
+
 context = ssl.SSLContext(ssl.PROTOCOL_TLSv1)
 context.verify_mode = ssl.CERT_NONE
 si = SmartConnect(host="10.114.218.201",
